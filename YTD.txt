@@ -1,0 +1,445 @@
+ 
+ 
+ KPIDashboardYTD
+ 
+DatabaseName:asa-gdp-eas-prd-hk-01
+
+MountPoint:/mnt/fwddata
+
+ServerName:sql-gdp-eas-prd-hk-01.database.windows.net
+
+SourcePath: Efrom/managementdashboard
+
+TableName:BRAIN.tb_fwd_managementdashboard_groupperformance_ytd_monthly_fact_seven
+
+
+//===========================================================================================================================================================================================  
+ %scala
+  import org.apache.spark.sql.types._
+  import org.apache.spark.sql.functions._
+  import java.util.Properties
+  import org.apache.spark.sql.SaveMode
+  import java.sql.DriverManager
+  import java.text.SimpleDateFormat
+  import java.util.{Calendar, Date, TimeZone}
+  import scala.collection.mutable.ListBuffer
+  import org.apache.commons.lang3.StringUtils
+  import scala.math.BigDecimal.RoundingMode
+  import scala.util.control.Breaks._
+  
+  
+//===========================================================================================================================================================================================  
+  
+  
+//Example value: PH/FWD/LA/Curated/Cleansing/Final/AGENT/
+dbutils.widgets.text("SourcePath", "Parameterized")
+
+//Example value: dw.Agent
+dbutils.widgets.text("TableName", "Parameterized")
+
+//Example value: sql-gdp-eas-prd-hk-01.database.windows.net
+dbutils.widgets.text("ServerName", "Parameterized")
+
+//Example value: asa-gdp-eas-prd-hk-01
+dbutils.widgets.text("DatabaseName", "Parameterized")
+
+//Example value: /mnt/fwddata
+dbutils.widgets.text("MountPoint", "Parameterized")
+
+val source_path = dbutils.widgets.get("SourcePath")
+val table_name = dbutils.widgets.get("TableName")
+val server_name = dbutils.widgets.get("ServerName")
+val database_name = dbutils.widgets.get("DatabaseName")
+val mnt_point = dbutils.widgets.get("MountPoint")
+
+
+
+
+  
+//===========================================================================================================================================================================================
+
+
+//This has to be configured in Azure Key Vault
+val appID = s"c96f2fbc-e387-41f9-8c9f-860ea258e7e1"
+val secret = s"-hDVEE79i_1n6D6LW.NSNW62Kz92~~6P7R"
+val tenantID = s"a8a4aed7-f228-48e2-bdd7-c2c82758d462"
+
+spark.conf.set("fs.azure.account.auth.type", "OAuth")
+spark.conf.set("fs.azure.account.oauth.provider.type", "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
+spark.conf.set("fs.azure.account.oauth2.client.id", "c96f2fbc-e387-41f9-8c9f-860ea258e7e1")
+spark.conf.set("fs.azure.account.oauth2.client.secret", "-hDVEE79i_1n6D6LW.NSNW62Kz92~~6P7R")
+spark.conf.set("fs.azure.account.oauth2.client.endpoint", "https://login.microsoftonline.com/a8a4aed7-f228-48e2-bdd7-c2c82758d462/oauth2/token")
+spark.conf.set("fs.azure.createRemoteFileSystemDuringInitialization", "true")
+
+val storageAccountName = s"dlsgdpeasprd01"
+val fileSystemName = s"gdpeaspdls01ggrs"
+
+spark.conf.set("fs.azure.account.auth.type.dlsgdpeasprd01.dfs.core.windows.net", "OAuth")
+spark.conf.set("fs.azure.account.oauth.provider.type.dlsgdpeasprd01.dfs.core.windows.net", "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
+spark.conf.set("fs.azure.account.oauth2.client.id.dlsgdpeasprd01.dfs.core.windows.net", "c96f2fbc-e387-41f9-8c9f-860ea258e7e1")
+spark.conf.set("fs.azure.account.oauth2.client.secret.dlsgdpeasprd01.dfs.core.windows.net", "-hDVEE79i_1n6D6LW.NSNW62Kz92~~6P7R")
+spark.conf.set("fs.azure.account.oauth2.client.endpoint.dlsgdpeasprd01.dfs.core.windows.net", "https://login.microsoftonline.com/a8a4aed7-f228-48e2-bdd7-c2c82758d462/oauth2/token")
+spark.conf.set("fs.azure.createRemoteFileSystemDuringInitialization", "true")
+dbutils.fs.ls("abfss://gdpeaspdls01ggrs@dlsgdpeasprd01.dfs.core.windows.net/")
+spark.conf.set("fs.azure.createRemoteFileSystemDuringInitialization", "false")
+spark.conf.set("spark.databricks.sqldw.writeSemantics", "polybase")
+
+
+
+//cmd===========================================================================================================================================================================================
+
+%scala
+//This has to be configured in Azure Key Vault
+val jdbc_username = "fwddwuser"
+val jdbc_password = "Polaris@2020"
+
+val jdbc_hostname = s"${server_name}" //typically, this is in the form or servername.database.windows.net
+val jdbc_port = 1433
+val jdbc_database = s"${database_name}"
+
+val jdbc_url = s"jdbc:sqlserver://${jdbc_hostname}:${jdbc_port};database=${jdbc_database};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=60;"
+
+//===========================================================================================================================================================================================
+%scala
+val data_df = spark.read.option("header", "true").csv(s"${mnt_point}/${source_path}")
+
+//===========================================================================================================================================================================================
+
+%scala
+display(data_df)
+
+//===========================================================================================================================================================================================
+
+%scala
+// val dataList = data_df.select("Country", "Reporting Period")
+// display(dataList)
+// display(data_df.select($"Country",$"Reporting Period").where($"Country" = "HK"))
+// display(data_df.select("Country").collect().distinct)
+// display(data_df.select("Reporting Period").collect())
+data_df.createOrReplaceTempView("data_list")
+var dataList1 = spark.sql("SELECT period AS period,country,channel,`reporting_period`,lcy,`ytd_exr`,`iape_act_usd`,`iape_fore_usd`,`vnb_act_usd`,`vnb_fore_usd`,`pape_act_usd`,`pape_fore_usd`,`pvnb_act_usd`,`pvnb_fore_usd`,`iape_plan_usd`,`vnb_plan_usd`,`pape_plan_usd`,`pvnb_plan_usd`,`vnb_margin_act`,`vnb_margin_fore`,`prot__ratio_act`,`prot__ratio_fore`,`exr_plan` from data_list")
+val dataList = dataList1.withColumn("Period",regexp_replace(col("Period"), "/", "-")) 
+display(dataList)
+
+//===========================================================================================================================================================================================
+
+//（totalAPE-totalAPEPlan）/totalAPEPLAN
+// totalAPE 获取的今年APE累加值为2020年6个月的ActualAPE值
+val country_list = dataList.select($"Country").collect().map(_(0)).toList.distinct
+// val year_list = dataList.select($"Period").collect().map(_(0)).toList.distinct
+val year_list : List[String] = List("2020","2019","2018")
+val channel_list = dataList.select($"Channel").collect().map(_(0)).toList.distinct
+
+
+//===========================================================================================================================================================================================
+
+def country_name_match(ct: String): String = ct match {
+  case "HK" => "HongKong"
+  case "SG" => "Singapore"
+  case "JP" => "Japan"
+  case "ID" => "Indonesia"
+  case "VN" => "Vietnam"
+  case "TH" => "Thailand"
+  case "PH" => "Philippnes"
+  case "MY" => "Malaysia"
+  case "TH SCB" => "Thailand"
+  case "TH FWD" => "Thailand"
+}
+
+// 获取当前上月日期
+def getMonthInfo(date: String): String = {
+  var month = date.substring(4, 6)
+  var year = date.substring(0, 4)
+  var intYearEn = year.toInt
+  var newDate = ""
+  if (month.startsWith("0")) {
+    month = month.substring(1)
+    var intMonthEn = month.toInt
+    if (intMonthEn == 1) {
+      newDate = (intYearEn - 1) + "" + "1201"
+    }
+    else {
+      newDate = intYearEn + "" + ("0" + (intMonthEn - 1) + "01")
+    }
+  }
+  else if (month.equals("10")) {
+    newDate = intYearEn + "0901"
+  }
+  else {
+    var intMonthEn = month.toInt
+    newDate = intYearEn + "" + ((intMonthEn - 1) + "01")
+  }
+  return newDate
+}
+
+//===========================================================================================================================================================================================
+
+//初始化 scala 对象
+case class
+ytd_year(
+year:String,country_name:String,bu_name:String,channel_name:String,ape_ytd:BigDecimal,ape_plan_ytd:BigDecimal,ape_forecast_ytd:BigDecimal,vnb_ytd:BigDecimal,vnb_plan_ytd:BigDecimal,vnb_forecast_ytd:BigDecimal,ape_py_ytd:BigDecimal,vnb_py_ytd:BigDecimal,pvnb_act_ytd:BigDecimal,pvnb_plan_ytd:BigDecimal,pvnb_fore_ytd:BigDecimal,pape_act_ytd:BigDecimal,pape_plan_ytd:BigDecimal,pape_fore_ytd:BigDecimal,pape_py_ytd:BigDecimal,pvnb_py_ytd:BigDecimal,iape_plan_allyear:BigDecimal,iape_act_allyear:BigDecimal,iape_fore_allyear:BigDecimal,pape_plan_allyear:BigDecimal,pape_act_allyear:BigDecimal,pape_fore_allyear:BigDecimal,vnb_plan_allyear:BigDecimal,vnb_act_allyear:BigDecimal,vnb_fore_allyear:BigDecimal,pvnb_plan_allyear:BigDecimal,pvnb_act_allyear:BigDecimal,pvnb_fore_allyear:BigDecimal, ape_py_allyear:BigDecimal, vnb_py_allyear:BigDecimal, pape_py_allyear:BigDecimal,pvnb_py_allyear:BigDecimal)
+
+var
+year,countryName,buName,channelName,apeYtd,apePlanYtd,apeForecastYtd,vnbYtd,vnbPlanYtd,vnbForecastYtd,apePyYtd,vnbPyYtd,pvnbActYtd,pvnbPlanYtd,pvnbForeYtd,papeActYtd,papePlanYtd,papeForeYtd,papePyYtd,pvnbPyYtd,iapePlanAllyear,iapeActAllyear,iapeForeAllyear,papePlanAllyear,papeActAllyear,papeForeAllyear,vnbPlanAllyear,vnbActAllyear,vnbForeAllyear,pvnbPlanAllyear,pvnbActAllyear,pvnbForeAllyear,apePyAllYtd,vnbPyAllYtd,papePyAllYtd,pvnbPyAllYtd = ""
+
+val ArrayCols = new ListBuffer[ytd_year]()
+
+//===========================================================================================================================================================================================
+
+// 获取当前时间，目的对数据进行同比处理。
+var systemTime = new  SimpleDateFormat("yyyyMMdd").format(new Date)
+
+// var systemTime = "20201001"
+// 上个月月初 也就是实际处理的数据时间
+var realDateTime = getMonthInfo(systemTime)
+// 年 year= realDateTime.substring(0,4)  然后 获取当年初始日期： year+"0101"
+var nowYearTime = realDateTime.substring(0,4)
+// 当前年月日 systemTime.substring(0,6) +"01"
+var beginDateTime = nowYearTime + "0101"
+// var endDateTime = systemTime.substring(0,6) +"01"
+var endDateTime = nowYearTime +"0901"
+
+var pastBeginDateTime = (nowYearTime.toInt - 1).toString + "0101"
+//  var pastEndDateTime = (systemTime.substring(0,4).toInt -1).toString + systemTime.substring(4,6) +"01"
+ var pastEndDateTime = (systemTime.substring(0,4).toInt -1).toString + "0901"
+
+//var pastEndDateTime = (systemTime.substring(0,4).toInt).toString + "0101"
+// var pastEndDateTime = (nowYearTime.toInt).toString + "0101"
+
+//===========================================================================================================================================================================================
+
+// %scala
+//循环
+for(yearList <- year_list){
+   var beginTime = "0"
+   var endTime = "0"
+   var pastBeginTime = "0"
+   var pastEndTime = "0"
+  var isNotNull = 0L
+//   if(yearList === nowYearTime){
+//            pastEndTime = nowYearTime.toString + "0901"
+//          } else {
+//            pastEndTime = (nowYearTime.toInt +1).toString + "0101"
+//          }
+   if(yearList.equals(nowYearTime)){
+     beginTime = beginDateTime
+     endTime = endDateTime
+     pastBeginTime = pastBeginDateTime
+     pastEndTime = pastEndDateTime
+   }else{
+     beginTime = yearList.toString +"0101"
+     endTime = (yearList.toString.toInt + 1) +"0101"
+//      endTime =  yearList.toString +"0901"
+     pastBeginTime = (yearList.toString.toInt - 1) +"0101"
+//       pastEndTime = (yearList.toString.toInt - 1) +"0901"
+      pastEndTime = yearList.toString +"0101"
+   }
+  
+  
+  for(countryList <- country_list){
+    for(channelList <- channel_list){
+      
+       breakable {
+            if ("Overall".equals(channelList)) break
+         
+         
+         println("begin -> detailCumMoMData" +new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date))
+         println(beginTime+"------------beginTime")
+         println(endTime+"------------endTime")
+         println(pastBeginTime+"------------pastBeginTime")
+         println(pastEndTime+"------------pastEndTime")
+         
+        
+           
+     // 1）判断是否当当前年份，如果是，那么就需要对其当年的数据处理到当前月的上个月
+        year = yearList.toString
+        countryName = country_name_match(countryList.toString)
+        buName = countryList.toString
+        channelName = channelList.toString
+         
+      val filterDF = dataList.filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyyMMdd") >= beginTime && date_format(col("Period"), "yyyyMMdd") < endTime)
+         println(yearList.toString.toInt+"222222222222")
+      var isNotNull = filterDF.count()
+         println("--------------------"+isNotNull)
+      if(isNotNull > 0){//有数据，就进行处理,,      当前年1-8月份的·数据
+        apeYtd = filterDF.agg(sum("iape_act_usd") as "totalAPE").collect().map(_(0)).toList.distinct.apply(0).toString
+        apePlanYtd = filterDF.agg(sum("iape_plan_usd") as "totalAPEPlan").collect().map(_(0)).toList.distinct.apply(0).toString
+        apeForecastYtd = filterDF.agg(sum("iape_fore_usd") as "totalAPEFore").collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbYtd = filterDF.agg(sum("vnb_act_usd") as "totalVNB").collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbPlanYtd = filterDF.agg(sum("vnb_plan_usd") as "totalVNBPlan").collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbForecastYtd = filterDF.agg(sum("vnb_fore_usd") as "totalVNBFore").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+        pvnbActYtd = filterDF.agg(sum("pvnb_act_usd") as "pvnbact").collect().map(_(0)).toList.distinct.apply(0).toString
+        pvnbPlanYtd = filterDF.agg(sum("pvnb_plan_usd") as "pvnbplan").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+        pvnbForeYtd = filterDF.agg(sum("pvnb_fore_usd") as "pvnbfore").collect().map(_(0)).toList.distinct.apply(0).toString
+        papeActYtd = filterDF.agg(sum("pape_act_usd") as "totalLPAPE").collect().map(_(0)).toList.distinct.apply(0).toString
+        papePlanYtd = filterDF.agg(sum("pape_plan_usd") as "papeplan").collect().map(_(0)).toList.distinct.apply(0).toString
+        papeForeYtd = filterDF.agg(sum("pape_fore_usd") as "totalPAPEForce").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+      }else{
+        apeYtd = "0"
+        apePlanYtd = "0"
+        apeForecastYtd = "0"
+        vnbYtd = "0"
+        vnbPlanYtd = "0"
+        vnbForecastYtd = "0"
+        pvnbActYtd = "0"
+        pvnbPlanYtd = "0"
+        pvnbForeYtd = "0"
+        papeActYtd = "0"
+        papePlanYtd = "0"
+        papeForeYtd = "0"
+        
+      }
+        
+     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^         
+      
+       //get pastYear  去年 八个月的数据 
+      val filterPastDF = dataList
+      .filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyyMMdd") >= pastBeginTime && date_format(col("Period"), "yyyyMMdd") < pastEndTime)
+//          .filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyyMMdd") >= pastBeginTime && date_format(col("Period"), "yyyyMMdd") <  beginTime)
+      var pastIsNotNull = filterPastDF.count()
+        
+         
+        println("10")
+      if(pastIsNotNull > 0){
+              println("11")
+        
+            apePyYtd = filterPastDF.agg(sum("iape_act_usd") as "pastTotalAPE").collect().map(_(0)).toList.distinct.apply(0).toString
+            vnbPyYtd = filterPastDF.agg(sum("vnb_act_usd") as "pastTotalVNB").collect().map(_(0)).toList.distinct.apply(0).toString
+            papePyYtd = filterPastDF.agg(sum("pape_act_usd") as "pastTotalPape").collect().map(_(0)).toList.distinct.apply(0).toString
+            pvnbPyYtd = filterPastDF.agg(sum("pvnb_act_usd") as "pastTotalPvnb").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+        
+            //pvnbActYtd = filterDF.agg(sum("pvnb_act_usd") as "pvnbact").collect().map(_(0)).toList.distinct.apply(0).toString
+           // pvnbPlanYtd = filterDF.agg(sum("pvnb_plan_usd") as "pvnbplan").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+          }else{
+          println("12")
+            apePyYtd = "0"
+            vnbPyYtd = "0"
+            papePyYtd = "0"
+            pvnbPyYtd = "0"
+        
+            //pvnbActYtd = "0"
+            //pvnbPlanYtd = "0"
+        
+         
+        
+        
+        println("##########################################################") 
+      }
+         //get pastAllYear  去年 12个月的数据 
+      val filterPastAllDF = dataList
+      .filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyyMMdd") >= pastBeginTime && date_format(col("Period"), "yyyyMMdd") < beginTime)
+      var pastAllIsNotNull = filterPastAllDF.count()
+      if(pastAllIsNotNull > 0){
+          
+            apePyAllYtd = filterPastAllDF.agg(sum("iape_act_usd") as "pastTotalAPE").collect().map(_(0)).toList.distinct.apply(0).toString
+            vnbPyAllYtd = filterPastAllDF.agg(sum("vnb_act_usd") as "pastTotalVNB").collect().map(_(0)).toList.distinct.apply(0).toString
+            papePyAllYtd = filterPastAllDF.agg(sum("pape_act_usd") as "pastTotalPape").collect().map(_(0)).toList.distinct.apply(0).toString
+            pvnbPyAllYtd = filterPastAllDF.agg(sum("pvnb_act_usd") as "pastTotalPvnb").collect().map(_(0)).toList.distinct.apply(0).toString
+        
+          }else{
+           
+            apePyAllYtd = "0"
+            vnbPyAllYtd = "0"
+            papePyAllYtd = "0"
+            pvnbPyAllYtd = "0"
+      }
+         //获取全年的数据
+      val allYearDataDF = dataList
+        .filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyy") === yearList)
+      if(allYearDataDF.count()>0){
+        iapePlanAllyear =allYearDataDF.agg(sum("iape_plan_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        iapeActAllyear =allYearDataDF.agg(sum("iape_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        iapeForeAllyear = allYearDataDF.agg(sum("iape_fore_usd") ).collect().map(_(0)).toList.distinct.apply(0).toString
+        papePlanAllyear = allYearDataDF.agg(sum("pape_plan_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        papeActAllyear = allYearDataDF.agg(sum("pape_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        papeForeAllyear = allYearDataDF.agg(sum("pape_fore_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbPlanAllyear = allYearDataDF.agg(sum("vnb_plan_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbActAllyear = allYearDataDF.agg(sum("vnb_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        vnbForeAllyear = allYearDataDF.agg(sum("vnb_fore_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        pvnbPlanAllyear = allYearDataDF.agg(sum("pvnb_plan_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        pvnbActAllyear = allYearDataDF.agg(sum("pvnb_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+        pvnbForeAllyear = allYearDataDF.agg(sum("pvnb_fore_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+      } else {
+        iapePlanAllyear  = "0"
+        iapeActAllyear  ="0"
+        iapeForeAllyear  ="0"
+        papePlanAllyear  ="0"
+        papeActAllyear ="0"
+        papeForeAllyear  ="0"
+        vnbPlanAllyear ="0"
+        vnbActAllyear = "0"
+        vnbForeAllyear ="0"
+        pvnbPlanAllyear  ="0"
+        pvnbActAllyear ="0"
+        pvnbForeAllyear  ="0"
+      }
+         
+        //去年全年的数据？？？？？
+        
+        
+        var department = new
+        ytd_year(
+year,countryName,buName,channelName,BigDecimal(apeYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(apePlanYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(apeForecastYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbPlanYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbForecastYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(apePyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbPyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbActYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbPlanYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbForeYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(papeActYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(papePlanYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(papeForeYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(papePyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbPyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(iapePlanAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(iapeActAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(iapeForeAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(papePlanAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(papeActAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(papeForeAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbPlanAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbActAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbForeAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbPlanAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbActAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbForeAllyear).setScale(9,RoundingMode.HALF_UP),BigDecimal(apePyAllYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbPyAllYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(papePyAllYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbPyAllYtd).setScale(9,RoundingMode.HALF_UP))
+        
+      ArrayCols.append(department)
+     
+        }
+      
+         
+         //>= 19 <2020 
+        //   判断今年不包含，而去年包含的渠道和运营位的数据：
+//           var filterPastDFOnly = dataList 
+//           .filter($"Country" === countryList && $"Channel" === channelList && date_format(col("Period"), "yyyyMMdd") >= pastBeginTime && date_format(col("Period"), "yyyyMMdd") < pastEndTime)
+//           var pastIsNotNullOnly = filterPastDFOnly.count()
+//           if(isNotNull <= 0 && pastIsNotNullOnly > 0){
+
+            
+//             apePyYtd = filterPastDFOnly.agg(sum("iape_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+//             vnbPyYtd = filterPastDFOnly.agg(sum("vnb_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+//             papePyYtd = filterPastDFOnly.agg(sum("pape_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+//             pvnbPyYtd = filterPastDFOnly.agg(sum("pvnb_act_usd")).collect().map(_(0)).toList.distinct.apply(0).toString
+         
+//             apePyYtd = if ("".equals(apePyYtd .trim()) || "NaN".equals(apePyYtd .trim())) "0" else apePyYtd 
+//             vnbPyYtd = if ("".equals(vnbPyYtd .trim()) || "NaN".equals(vnbPyYtd .trim())) "0" else vnbPyYtd  
+//             papePyYtd = if ("".equals(papePyYtd .trim()) || "NaN".equals(papePyYtd .trim())) "0" else papePyYtd     
+//             pvnbPyYtd = if ("".equals(pvnbPyYtd .trim()) || "NaN".equals(pvnbPyYtd .trim())) "0" else pvnbPyYtd 
+            
+            
+            
+//                     var departmentPastOnly = new
+//         ytd_year(
+// year,countryName,buName,channelName,null,null,null,null,null,null,BigDecimal(apePyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(vnbPyYtd).setScale(9,RoundingMode.HALF_UP),null,null,null,null,null,null,BigDecimal(papePyYtd).setScale(9,RoundingMode.HALF_UP),BigDecimal(pvnbPyYtd).setScale(9,RoundingMode.HALF_UP),null,null,null,null,null,null,null,null,null,null,null,null)
+         
+//             ArrayCols.append(departmentPastOnly)
+//           }
+      }
+      }  
+}   
+val realDataInfo=ArrayCols.toDS().toDF()
+// display(realDataInfo)
+
+
+
+//===========================================================================================================================================================================================
+
+  realDataInfo.repartition(1).write.mode("overwrite").option("header", "true").csv("${mnt_point}/${source_path}")
+
+  
+  
+  //===========================================================================================================================================================================================
+  
+  realDataInfo.write
+  .format("com.databricks.spark.sqldw")
+  .option("url", jdbc_url) 
+  .option("user", jdbc_username)
+  .option("tempDir","abfss://" + fileSystemName  + "@" + storageAccountName + ".dfs.core.windows.net/temp") 
+  .option("password", jdbc_password)
+  .option("useAzureMSI", "true") 
+  .option("dbTable", table_name) 
+  .mode ("append")
+  .save()
